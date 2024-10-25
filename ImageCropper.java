@@ -14,6 +14,7 @@ public class ImageCropper extends JFrame {
     private Point startPoint;
     private Rectangle cropRect;
     private boolean drawing = false;
+    private Rectangle imageRect; // 実際の画像表示領域を保持
 
     public ImageCropper() {
         setTitle("Image Cropper");
@@ -24,14 +25,13 @@ public class ImageCropper extends JFrame {
     }
 
     private void initializeUI() {
-        // メインパネルの設定（左側3/4）
         mainPanel = new JPanel() {
             @Override
             protected void paintComponent(Graphics g) {
                 super.paintComponent(g);
                 if (originalImage != null) {
-                    // 画像をパネルサイズに合わせて表示
-                    drawFitImage(g);
+                    // 画像を描画し、表示領域を保存
+                    imageRect = drawFitImage(g);
                     
                     // 選択範囲を描画
                     if (cropRect != null) {
@@ -45,13 +45,11 @@ public class ImageCropper extends JFrame {
             }
         };
 
-        // プレビューパネルの設定（右側1/4）
         previewPanel = new JPanel() {
             @Override
             protected void paintComponent(Graphics g) {
                 super.paintComponent(g);
                 if (croppedImage != null) {
-                    // クロップされた画像をプレビューパネルに表示
                     Graphics2D g2d = (Graphics2D) g;
                     int w = getWidth();
                     int h = getHeight();
@@ -66,23 +64,32 @@ public class ImageCropper extends JFrame {
             }
         };
 
-        // マウスリスナーの追加
         MouseAdapter mouseAdapter = new MouseAdapter() {
             @Override
             public void mousePressed(MouseEvent e) {
-                startPoint = e.getPoint();
-                cropRect = null;
-                drawing = true;
-                mainPanel.repaint();
+                // 画像の表示領域内でのみ処理を行う
+                if (imageRect != null && imageRect.contains(e.getPoint())) {
+                    startPoint = e.getPoint();
+                    cropRect = null;
+                    drawing = true;
+                    mainPanel.repaint();
+                }
             }
 
             @Override
             public void mouseDragged(MouseEvent e) {
-                if (drawing) {
-                    int x = Math.min(startPoint.x, e.getX());
-                    int y = Math.min(startPoint.y, e.getY());
-                    int width = Math.abs(e.getX() - startPoint.x);
-                    int height = Math.abs(e.getY() - startPoint.y);
+                if (drawing && imageRect != null) {
+                    // マウス座標を画像表示領域内に制限
+                    Point p = new Point(
+                        Math.max(imageRect.x, Math.min(e.getX(), imageRect.x + imageRect.width)),
+                        Math.max(imageRect.y, Math.min(e.getY(), imageRect.y + imageRect.height))
+                    );
+                    
+                    int x = Math.min(startPoint.x, p.x);
+                    int y = Math.min(startPoint.y, p.y);
+                    int width = Math.abs(p.x - startPoint.x);
+                    int height = Math.abs(p.y - startPoint.y);
+                    
                     cropRect = new Rectangle(x, y, width, height);
                     mainPanel.repaint();
                 }
@@ -90,34 +97,40 @@ public class ImageCropper extends JFrame {
 
             @Override
             public void mouseReleased(MouseEvent e) {
-                drawing = false;
-                if (cropRect != null && originalImage != null) {
-                    // 選択範囲を元画像の座標系に変換
-                    double scaleX = (double) originalImage.getWidth() / mainPanel.getWidth();
-                    double scaleY = (double) originalImage.getHeight() / mainPanel.getHeight();
+                if (drawing && cropRect != null && imageRect != null) {
+                    // 画像表示領域内での相対座標に変換
+                    double scaleX = (double) originalImage.getWidth() / imageRect.width;
+                    double scaleY = (double) originalImage.getHeight() / imageRect.height;
                     
-                    int x = (int) (cropRect.x * scaleX);
-                    int y = (int) (cropRect.y * scaleY);
+                    // 選択範囲の座標を画像表示領域からの相対位置に変換
+                    int relativeX = cropRect.x - imageRect.x;
+                    int relativeY = cropRect.y - imageRect.y;
+                    
+                    // 元画像での座標に変換
+                    int x = (int) (relativeX * scaleX);
+                    int y = (int) (relativeY * scaleY);
                     int width = (int) (cropRect.width * scaleX);
                     int height = (int) (cropRect.height * scaleY);
                     
                     // 範囲チェック
-                    x = Math.max(0, Math.min(x, originalImage.getWidth()));
-                    y = Math.max(0, Math.min(y, originalImage.getHeight()));
+                    x = Math.max(0, Math.min(x, originalImage.getWidth() - 1));
+                    y = Math.max(0, Math.min(y, originalImage.getHeight() - 1));
                     width = Math.min(width, originalImage.getWidth() - x);
                     height = Math.min(height, originalImage.getHeight() - y);
                     
-                    // 画像をクロップ
-                    croppedImage = originalImage.getSubimage(x, y, width, height);
-                    previewPanel.repaint();
+                    // 最小サイズチェック
+                    if (width > 0 && height > 0) {
+                        croppedImage = originalImage.getSubimage(x, y, width, height);
+                        previewPanel.repaint();
+                    }
                 }
+                drawing = false;
             }
         };
 
         mainPanel.addMouseListener(mouseAdapter);
         mainPanel.addMouseMotionListener(mouseAdapter);
 
-        // メニューバーの作成
         JMenuBar menuBar = new JMenuBar();
         JMenu fileMenu = new JMenu("File");
         JMenuItem openItem = new JMenuItem("Open");
@@ -131,14 +144,13 @@ public class ImageCropper extends JFrame {
         menuBar.add(fileMenu);
         setJMenuBar(menuBar);
 
-        // レイアウトの設定
         setLayout(new BorderLayout());
         JSplitPane splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, mainPanel, previewPanel);
-        splitPane.setResizeWeight(0.75); // 左側のパネルが3/4の幅を占める
+        splitPane.setResizeWeight(0.75);
         add(splitPane, BorderLayout.CENTER);
     }
 
-    private void drawFitImage(Graphics g) {
+    private Rectangle drawFitImage(Graphics g) {
         if (originalImage != null) {
             Graphics2D g2d = (Graphics2D) g;
             int panelWidth = mainPanel.getWidth();
@@ -154,7 +166,11 @@ public class ImageCropper extends JFrame {
             int y = (panelHeight - scaledHeight) / 2;
             
             g2d.drawImage(originalImage, x, y, scaledWidth, scaledHeight, null);
+            
+            // 実際の画像表示領域を返す
+            return new Rectangle(x, y, scaledWidth, scaledHeight);
         }
+        return null;
     }
 
     private void loadImage() {
