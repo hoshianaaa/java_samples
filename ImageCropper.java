@@ -7,276 +7,198 @@ import java.io.File;
 import java.io.IOException;
 
 public class ImageCropper extends JFrame {
-    private ImagePanel imagePanel;
-    private CroppedImagePanel croppedImagePanel;
+    private BufferedImage originalImage;
+    private BufferedImage croppedImage;
+    private JPanel mainPanel;
+    private JPanel previewPanel;
+    private Point startPoint;
+    private Rectangle cropRect;
+    private boolean drawing = false;
 
     public ImageCropper() {
-        setTitle("画像クロッパー");
+        setTitle("Image Cropper");
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        setLayout(new BorderLayout());
-
-        // 画像表示パネル
-        imagePanel = new ImagePanel();
-        // クロップ画像表示パネル
-        croppedImagePanel = new CroppedImagePanel();
-
-        // クロップイベントを設定
-        imagePanel.setCropListener(croppedImage -> {
-            croppedImagePanel.setCroppedImage(croppedImage);
-        });
-
-        // スプリットペインで左3/4と右1/4に分割
-        JSplitPane splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, imagePanel, croppedImagePanel);
-        splitPane.setDividerLocation((int) (Toolkit.getDefaultToolkit().getScreenSize().width * 0.75));
-        splitPane.setResizeWeight(0.75);
-        add(splitPane, BorderLayout.CENTER);
-
-        // メニューバーに「画像を開く」オプションを追加
-        JMenuBar menuBar = new JMenuBar();
-        JMenu menu = new JMenu("ファイル");
-        JMenuItem openItem = new JMenuItem("画像を開く");
-        openItem.addActionListener(e -> openImage());
-        menu.add(openItem);
-        menuBar.add(menu);
-        setJMenuBar(menuBar);
-
+        initializeUI();
         setSize(1200, 800);
         setLocationRelativeTo(null);
-        setVisible(true);
     }
 
-    private void openImage() {
-        JFileChooser fileChooser = new JFileChooser();
-        fileChooser.setCurrentDirectory(new File(".")); // カレントディレクトリを初期ディレクトリに設定
-        int result = fileChooser.showOpenDialog(this);
-        if (result == JFileChooser.APPROVE_OPTION) {
-            File selectedFile = fileChooser.getSelectedFile();
-            try {
-                BufferedImage img = ImageIO.read(selectedFile);
-                imagePanel.setImage(img);
-            } catch (IOException ex) {
-                ex.printStackTrace();
-                JOptionPane.showMessageDialog(this, "画像の読み込みに失敗しました。", "エラー", JOptionPane.ERROR_MESSAGE);
+    private void initializeUI() {
+        // メインパネルの設定（左側3/4）
+        mainPanel = new JPanel() {
+            @Override
+            protected void paintComponent(Graphics g) {
+                super.paintComponent(g);
+                if (originalImage != null) {
+                    // 画像をパネルサイズに合わせて表示
+                    drawFitImage(g);
+                    
+                    // 選択範囲を描画
+                    if (cropRect != null) {
+                        Graphics2D g2d = (Graphics2D) g;
+                        g2d.setColor(new Color(255, 255, 255, 100));
+                        g2d.fill(cropRect);
+                        g2d.setColor(Color.WHITE);
+                        g2d.draw(cropRect);
+                    }
+                }
             }
-        }
-    }
+        };
 
-    // メインメソッド
-    public static void main(String[] args) {
-        SwingUtilities.invokeLater(() -> new ImageCropper());
-    }
-}
+        // プレビューパネルの設定（右側1/4）
+        previewPanel = new JPanel() {
+            @Override
+            protected void paintComponent(Graphics g) {
+                super.paintComponent(g);
+                if (croppedImage != null) {
+                    // クロップされた画像をプレビューパネルに表示
+                    Graphics2D g2d = (Graphics2D) g;
+                    int w = getWidth();
+                    int h = getHeight();
+                    double scale = Math.min((double) w / croppedImage.getWidth(),
+                                         (double) h / croppedImage.getHeight());
+                    int scaledW = (int) (croppedImage.getWidth() * scale);
+                    int scaledH = (int) (croppedImage.getHeight() * scale);
+                    int x = (w - scaledW) / 2;
+                    int y = (h - scaledH) / 2;
+                    g2d.drawImage(croppedImage, x, y, scaledW, scaledH, null);
+                }
+            }
+        };
 
-class ImagePanel extends JPanel {
-    private BufferedImage originalImage;
-    private BufferedImage displayedImage;
-    private double scale = 1.0;
-
-    private Point startPoint;
-    private Point endPoint;
-    private Rectangle selectionRect;
-
-    private CropListener cropListener;
-
-    public ImagePanel() {
-        setBackground(Color.GRAY);
+        // マウスリスナーの追加
         MouseAdapter mouseAdapter = new MouseAdapter() {
             @Override
             public void mousePressed(MouseEvent e) {
-                if (displayedImage != null) {
-                    startPoint = e.getPoint();
-                    endPoint = startPoint;
-                    repaint();
-                }
+                startPoint = e.getPoint();
+                cropRect = null;
+                drawing = true;
+                mainPanel.repaint();
             }
 
             @Override
             public void mouseDragged(MouseEvent e) {
-                if (startPoint != null) {
-                    endPoint = e.getPoint();
-                    selectionRect = createRectangle(startPoint, endPoint);
-                    repaint();
+                if (drawing) {
+                    int x = Math.min(startPoint.x, e.getX());
+                    int y = Math.min(startPoint.y, e.getY());
+                    int width = Math.abs(e.getX() - startPoint.x);
+                    int height = Math.abs(e.getY() - startPoint.y);
+                    cropRect = new Rectangle(x, y, width, height);
+                    mainPanel.repaint();
                 }
             }
 
             @Override
             public void mouseReleased(MouseEvent e) {
-                if (startPoint != null && endPoint != null && selectionRect != null) {
-                    // 座標をオリジナル画像にスケールバック
-                    int x = (int) ((selectionRect.x - getImageX()) / scale);
-                    int y = (int) ((selectionRect.y - getImageY()) / scale);
-                    int w = (int) (selectionRect.width / scale);
-                    int h = (int) (selectionRect.height / scale);
-
-                    // 画像の範囲内に収める
-                    x = Math.max(0, x);
-                    y = Math.max(0, y);
-                    w = Math.min(originalImage.getWidth() - x, w);
-                    h = Math.min(originalImage.getHeight() - y, h);
-
-                    if (w > 0 && h > 0) {
-                        BufferedImage cropped = originalImage.getSubimage(x, y, w, h);
-                        if (cropListener != null) {
-                            cropListener.onCrop(cropped);
-                        }
-                    }
+                drawing = false;
+                if (cropRect != null && originalImage != null) {
+                    // 選択範囲を元画像の座標系に変換
+                    double scaleX = (double) originalImage.getWidth() / mainPanel.getWidth();
+                    double scaleY = (double) originalImage.getHeight() / mainPanel.getHeight();
+                    
+                    int x = (int) (cropRect.x * scaleX);
+                    int y = (int) (cropRect.y * scaleY);
+                    int width = (int) (cropRect.width * scaleX);
+                    int height = (int) (cropRect.height * scaleY);
+                    
+                    // 範囲チェック
+                    x = Math.max(0, Math.min(x, originalImage.getWidth()));
+                    y = Math.max(0, Math.min(y, originalImage.getHeight()));
+                    width = Math.min(width, originalImage.getWidth() - x);
+                    height = Math.min(height, originalImage.getHeight() - y);
+                    
+                    // 画像をクロップ
+                    croppedImage = originalImage.getSubimage(x, y, width, height);
+                    previewPanel.repaint();
                 }
-                startPoint = null;
-                endPoint = null;
-                selectionRect = null;
-                repaint();
             }
         };
-        addMouseListener(mouseAdapter);
-        addMouseMotionListener(mouseAdapter);
+
+        mainPanel.addMouseListener(mouseAdapter);
+        mainPanel.addMouseMotionListener(mouseAdapter);
+
+        // メニューバーの作成
+        JMenuBar menuBar = new JMenuBar();
+        JMenu fileMenu = new JMenu("File");
+        JMenuItem openItem = new JMenuItem("Open");
+        JMenuItem saveItem = new JMenuItem("Save Cropped");
+
+        openItem.addActionListener(e -> loadImage());
+        saveItem.addActionListener(e -> saveCroppedImage());
+
+        fileMenu.add(openItem);
+        fileMenu.add(saveItem);
+        menuBar.add(fileMenu);
+        setJMenuBar(menuBar);
+
+        // レイアウトの設定
+        setLayout(new BorderLayout());
+        JSplitPane splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, mainPanel, previewPanel);
+        splitPane.setResizeWeight(0.75); // 左側のパネルが3/4の幅を占める
+        add(splitPane, BorderLayout.CENTER);
     }
 
-    private Rectangle createRectangle(Point p1, Point p2) {
-        int x = Math.min(p1.x, p2.x);
-        int y = Math.min(p1.y, p2.y);
-        int w = Math.abs(p1.x - p2.x);
-        int h = Math.abs(p1.y - p2.y);
-        return new Rectangle(x, y, w, h);
-    }
-
-    public void setImage(BufferedImage img) {
-        this.originalImage = img;
-        this.displayedImage = getScaledImage(img);
-        repaint();
-    }
-
-    private BufferedImage getScaledImage(BufferedImage img) {
-        int panelWidth = getWidth();
-        int panelHeight = getHeight();
-        if (panelWidth == 0 || panelHeight == 0) {
-            // 初期サイズがまだ設定されていない場合、フレームサイズを基に計算
-            Dimension screenSize = Toolkit.getDefaultToolkit().getScreenSize();
-            panelWidth = (int) (screenSize.width * 0.75);
-            panelHeight = screenSize.height;
+    private void drawFitImage(Graphics g) {
+        if (originalImage != null) {
+            Graphics2D g2d = (Graphics2D) g;
+            int panelWidth = mainPanel.getWidth();
+            int panelHeight = mainPanel.getHeight();
+            
+            double scale = Math.min((double) panelWidth / originalImage.getWidth(),
+                                 (double) panelHeight / originalImage.getHeight());
+            
+            int scaledWidth = (int) (originalImage.getWidth() * scale);
+            int scaledHeight = (int) (originalImage.getHeight() * scale);
+            
+            int x = (panelWidth - scaledWidth) / 2;
+            int y = (panelHeight - scaledHeight) / 2;
+            
+            g2d.drawImage(originalImage, x, y, scaledWidth, scaledHeight, null);
         }
-        double imgWidth = img.getWidth();
-        double imgHeight = img.getHeight();
-
-        double scaleX = (double) panelWidth / imgWidth;
-        double scaleY = (double) panelHeight / imgHeight;
-        scale = Math.min(scaleX, scaleY);
-
-        int newWidth = (int) (imgWidth * scale);
-        int newHeight = (int) (imgHeight * scale);
-
-        Image scaled = img.getScaledInstance(newWidth, newHeight, Image.SCALE_SMOOTH);
-        BufferedImage buffered = new BufferedImage(newWidth, newHeight, BufferedImage.TYPE_INT_ARGB);
-        Graphics2D g2d = buffered.createGraphics();
-        g2d.drawImage(scaled, 0, 0, null);
-        g2d.dispose();
-        return buffered;
     }
 
-    @Override
-    protected void paintComponent(Graphics g) {
-        super.paintComponent(g);
-        if (originalImage != null && displayedImage != null) {
-            // 画像を中央に配置
-            int x = getImageX();
-            int y = getImageY();
-            g.drawImage(displayedImage, x, y, this);
-            // 矩形選択を描画
-            if (selectionRect != null) {
-                Graphics2D g2d = (Graphics2D) g;
-                g2d.setColor(Color.RED);
-                g2d.setStroke(new BasicStroke(2));
-                g2d.draw(selectionRect);
+    private void loadImage() {
+        JFileChooser fileChooser = new JFileChooser();
+        if (fileChooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) {
+            try {
+                File file = fileChooser.getSelectedFile();
+                originalImage = ImageIO.read(file);
+                cropRect = null;
+                croppedImage = null;
+                mainPanel.repaint();
+                previewPanel.repaint();
+            } catch (IOException ex) {
+                JOptionPane.showMessageDialog(this, "Error loading image: " + ex.getMessage(),
+                                          "Error", JOptionPane.ERROR_MESSAGE);
             }
         }
     }
 
-    private int getImageX() {
-        return (getWidth() - displayedImage.getWidth()) / 2;
-    }
-
-    private int getImageY() {
-        return (getHeight() - displayedImage.getHeight()) / 2;
-    }
-
-    // リサイズ時に画像を再スケール
-    @Override
-    public void invalidate() {
-        super.invalidate();
-        if (originalImage != null) {
-            displayedImage = getScaledImage(originalImage);
-        }
-    }
-
-    public void setCropListener(CropListener listener) {
-        this.cropListener = listener;
-    }
-
-    // クロップイベントリスナーインターフェース
-    interface CropListener {
-        void onCrop(BufferedImage croppedImage);
-    }
-}
-
-class CroppedImagePanel extends JPanel {
-    private BufferedImage croppedImage;
-    private BufferedImage displayedCroppedImage;
-    private double scale = 1.0;
-
-    public CroppedImagePanel() {
-        setBackground(Color.LIGHT_GRAY);
-    }
-
-    public void setCroppedImage(BufferedImage img) {
-        this.croppedImage = img;
-        this.displayedCroppedImage = getScaledImage(img);
-        repaint();
-    }
-
-    private BufferedImage getScaledImage(BufferedImage img) {
-        int panelWidth = getWidth();
-        int panelHeight = getHeight();
-        if (panelWidth == 0 || panelHeight == 0) {
-            // 初期サイズがまだ設定されていない場合、フレームサイズを基に計算
-            Dimension screenSize = Toolkit.getDefaultToolkit().getScreenSize();
-            panelWidth = (int) (screenSize.width * 0.25);
-            panelHeight = screenSize.height;
-        }
-        double imgWidth = img.getWidth();
-        double imgHeight = img.getHeight();
-
-        double scaleX = (double) panelWidth / imgWidth;
-        double scaleY = (double) panelHeight / imgHeight;
-        scale = Math.min(scaleX, scaleY);
-
-        int newWidth = (int) (imgWidth * scale);
-        int newHeight = (int) (imgHeight * scale);
-
-        Image scaled = img.getScaledInstance(newWidth, newHeight, Image.SCALE_SMOOTH);
-        BufferedImage buffered = new BufferedImage(newWidth, newHeight, BufferedImage.TYPE_INT_ARGB);
-        Graphics2D g2d = buffered.createGraphics();
-        g2d.drawImage(scaled, 0, 0, null);
-        g2d.dispose();
-        return buffered;
-    }
-
-    @Override
-    protected void paintComponent(Graphics g) {
-        super.paintComponent(g);
-        if (displayedCroppedImage != null) {
-            // 画像を中央に配置
-            int x = (getWidth() - displayedCroppedImage.getWidth()) / 2;
-            int y = (getHeight() - displayedCroppedImage.getHeight()) / 2;
-            g.drawImage(displayedCroppedImage, x, y, this);
-        }
-    }
-
-    // リサイズ時に画像を再スケール
-    @Override
-    public void invalidate() {
-        super.invalidate();
+    private void saveCroppedImage() {
         if (croppedImage != null) {
-            displayedCroppedImage = getScaledImage(croppedImage);
+            JFileChooser fileChooser = new JFileChooser();
+            if (fileChooser.showSaveDialog(this) == JFileChooser.APPROVE_OPTION) {
+                try {
+                    File file = fileChooser.getSelectedFile();
+                    String name = file.getName();
+                    String extension = "png";
+                    if (name.lastIndexOf(".") != -1) {
+                        extension = name.substring(name.lastIndexOf(".") + 1);
+                    } else {
+                        file = new File(file.getAbsolutePath() + ".png");
+                    }
+                    ImageIO.write(croppedImage, extension, file);
+                } catch (IOException ex) {
+                    JOptionPane.showMessageDialog(this, "Error saving image: " + ex.getMessage(),
+                                              "Error", JOptionPane.ERROR_MESSAGE);
+                }
+            }
         }
     }
-}
 
+    public static void main(String[] args) {
+        SwingUtilities.invokeLater(() -> {
+            new ImageCropper().setVisible(true);
+        });
+    }
+}
